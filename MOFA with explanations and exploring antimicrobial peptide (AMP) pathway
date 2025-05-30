@@ -1375,7 +1375,7 @@ data <- get_data(MOFAobject,
 head(data)
 ```
 
-############EXTRA WORK NOT LINKED TO AMP #########################
+############EXTRA analysis -Imputation- NOT LINKED TO Antimicrobial peptides AMPs #########################
 
 ############ -11-Imputation of missing values
 
