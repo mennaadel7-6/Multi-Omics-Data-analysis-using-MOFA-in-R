@@ -41,9 +41,11 @@ This repository contains a **Multi-Omics-Data-analysis-using-MOFA-in-R script** 
 - Visualize sample clustering and factor heatmaps.
 - Investigate gene weights for AMP-related factors.
 
-### 5. AMP Gene Analysis
-- Subset and highlight AMP gene signatures across factors.
-- Compare factor values between AMP and non-AMP samples.
+### 5. AMP Gene Signature Analysis
+- Subset and highlight AMP gene signatures across MOFA factors
+- Compare treated vs untreated patients with respect to AMP gene involvement
+- Export AMP gene list for use in other studies
+- Save gene symbols as `.rds` and `.txt` formats for reuse
 
 ---
 
