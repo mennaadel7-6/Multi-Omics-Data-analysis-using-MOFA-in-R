@@ -1,0 +1,1704 @@
+---
+title: "MOFA with explanations and exploring antimicrobial peptide (AMP) pathway "
+output: html_document
+prepared by:Menatallah Adel Abdelmagid
+date: "2025-04-07"
+---
+
+```{r}
+ ######-1-Install packages########
+#BiocManager::install("MOFA2")
+
+#BiocManager::install("MOFAdata")
+#install.packages("randomForest")
+
+#######-2-library loading base package########
+library(stats ) # loaded before MOFA2 to avoid conflict with predict function in both packages, as i need MOFA2 . also i can use MOFA::predict(..) , to use predict fn from MOFA 2
+library(graphics)
+library(grDevices) 
+library(utils)
+library(methods)
+library(base)
+
+
+##important library loading
+library(MOFA2)
+library(MOFAdata) #to use the Reactome genesets for illustrations, which is contained in the MOFAdata package
+library(data.table)
+library(ggplot2)
+library(tidyverse)
+
+## other attached packages:
+##  [1] survminer_0.4.7     ggpubr_0.4.0        survival_3.2-3     
+##  [4] randomForest_4.6-14 forcats_0.5.0       stringr_1.4.0      
+##  [7] dplyr_1.0.0         purrr_0.3.4         readr_1.3.1        
+## [10] tidyr_1.1.0         tibble_3.0.1        tidyverse_1.3.0    
+## [13] ggplot2_3.3.2       data.table_1.12.8   MOFAdata_1.4.0     
+## [16] MOFA2_1.1           BiocStyle_2.16.0  
+```
+
+## R Markdown
+
+
+```{r}
+utils::data("CLL_data")
+lapply(CLL_data,dim)
+CLL_metadata <- fread("ftp://ftp.ebi.ac.uk/pub/databases/mofa/cll_vignette/sample_metadata.txt")
+
+```
+
+##-3- Create the MOFA obejct and train the model
+
+
+
+```{r}
+MOFAobject <- create_mofa(CLL_data)
+MOFAobject
+```
+##-3.1 Plot data overview
+```{r}
+plot_data_overview(MOFAobject)
+```
+#########-3.2 Define MOFA options
+
+
+########-   3.2.1  Data options
+    
+##Important arguments:
+
+#scale_groups: scale groups to the same total variance? Default is FALSE
+#scale_views: scale views to the same total variance? Default is FALSE
+#views: views names
+#groups: groups names
+
+    
+```{r}
+data_opts <- get_default_data_options(MOFAobject)
+data_opts
+
+```
+##3.2.2 Model options
+```{r}
+model_opts <- get_default_model_options(MOFAobject)
+model_opts$num_factors <- 15
+
+model_opts
+```
+#3.2.3 Training options
+```{r}
+train_opts <- get_default_training_options(MOFAobject)
+train_opts$convergence_mode <- "slow"
+train_opts$seed <- 42
+
+train_opts
+```
+
+#3.3 Train the MOFA model
+#prepare the MOFA object
+
+```{r}
+MOFAobject <- prepare_mofa(MOFAobject,
+  data_options = data_opts,
+  model_options = model_opts,
+  training_options = train_opts
+)
+```
+
+
+```{r}
+##load precomputed (pretrainned model for first time use of this vignette , because software has evolved since the original publication)
+# Load precomputed model
+
+
+#MOFAobject <- readRDS(url("http://ftp.ebi.ac.uk/pub/databases/mofa/cll_vignette/MOFA2_CLL.rds"))
+
+```
+```{r}
+packageVersion("MOFA2")
+str(MOFAobject) #str(MOFAobject) to check if the "covariates" slot exists.
+
+
+```
+### 4- Overview of the trained MOFA model
+#4.1 Slots
+
+```{r}
+
+#MOFAobject <- run_mofa(MOFAobject, use_basilisk = TRUE)
+ 
+
+
+
+####### first run: run_mofa(MOFAobject) then run : run_mofa(MOFAobject, use_basilisk = TRUE)    This is the easiest and most reliable way, especially on macOS. MOFA2 can automatically create and manage a clean Python environment using the basilisk package.
+
+
+
+#saveRDS(MOFAobject,"MOFA_object_CLL.rds")
+
+
+
+#Saves only the object (MOFAobject), not its name.
+
+#To RELOAD, you must assign it explicitly:
+
+MOFAobject <- readRDS("MOFA_object_CLL.rds")
+
+#More flexible — you can load it into any variable name.
+#Good for saving individual objects for use in modular or portable scripts.
+
+
+```
+
+```{r}
+?MOFA
+slotNames(MOFAobject)
+```
+
+
+
+#Data:
+```{r}
+
+names(MOFAobject@data)
+dim(MOFAobject@data$Drugs$group1) #why group1?
+```
+#Factor and Weight values (expectations of the posterior distributions):
+```{r}
+names(MOFAobject@expectations)
+```
+#
+
+
+```{r}
+# Dimensionality of the factor matrix: 200 samples, 15 factors
+dim(MOFAobject@expectations$Z$group1)
+# Check if data preparation was successful
+str(MOFAobject@data)
+names(MOFAobject@data$Drugs)
+
+# Dimensionality of the mRNA Weight matrix: 5000 features, 15 factors
+dim(MOFAobject@expectations$W$mRNA)
+```
+
+########## 4.2 Add sample metadata to the model
+
+#The sample metadata must be provided as a data.frame and it must contain a column sample with the sample IDs. 
+
+####Make sure that the samples in the metadata MATCH the samples in the model
+
+```{r}
+# Sanity check
+stopifnot(all(sort(CLL_metadata$sample)==sort(unlist(samples_names(MOFAobject)))))
+
+# Add sample metadata to the model
+samples_metadata(MOFAobject) <- CLL_metadata
+```
+
+######## 4.3 Correlation between factors
+
+#A good sanity check is to verify that the Factors are largely uncorrelated. In MOFA there are no orthogonality constraints such as in Principal Component Analysis, but if there is a lot of correlation between Factors this suggests a poor model fit. Reasons? Perhaps you used too many factors or perhaps the normalisation is not adequate.
+
+```{r}
+plot_factor_cor(MOFAobject)
+```
+
+############ 4.4 Plot variance decomposition
+
+###4.4.1 Variance decomposition by Factor
+
+#The most important insight that MOFA generates is the variance decomposition analysis. This plot shows the percentage of variance explained by each factor across each data modality (and group, if provided). It summarises the sources of variation from a complex heterogeneous data set in a single figure.
+```{r}
+
+plot_variance_explained(MOFAobject, max_r2=15) 
+```
+
+
+#the parameter max_r2=15 is used to control the maximum amount of variance that will be displayed in the plot, helping to highlight the most important factors that explain the majority of the variance in the data.
+
+
+#What insights from the data can we learn just from inspecting this plot?
+
+#Factor 1 captures a source of variability that is present across all data modalities. Thus, its etiology is likely to be something very important for the disease
+#Factor 2 captures a very strong source of variation that is exclusive to the drug response data.
+#Factor 3 captures variation that is present across multiple data modalities, except for DNA methylation. This is likely to be important too.
+#Factor 5 is capturing some co-variation between the mRNA and the drug response assay.
+
+##################4.4.2 Total variance explained per view
+
+#A reasonable question is whether the model is providing a good fit to the data. For this we can plot the total variance explained (using all factors). The resulting values will depend on the nature of the data set, the number of samples, the number of factors, etc. Some general guidelines:
+
+#Noisy data sets with strong non-linearities will result in small amounts of variance explained (<10%).
+#The higher the number of samples the smaller the total variance explained
+#The higher the number of factors, the higher the total variance explained.
+#MOFA is a linear and sparse model. This is helpful to prevent overfitting, but it will never explain 100% of the variance, even if using a lot of Factors.
+#In this data set, using only K=15 factors the model explains up to ~54% of the variation in the Drug response and ~42% of the variation in the mRNA data. This is quite remarkable for a linear model.
+
+```{r}
+plot_variance_explained(MOFAobject, plot_total = T)[[2]]
+```
+
+
+#################-5- Characterisation of Factor 1
+
+#There are a few systematic strategies to characterise the molecular etiology underlying the MOFA Factors and to relate them to the sample covariates:
+
+#Association analysis between the sample metadata and the Factor values.
+#Inspection of factor values.
+#Inspection of the feature weights.
+#Gene set enrichment analysis on the mRNA weights.
+
+
+################5.1 Association analysis
+
+######5.1 Association analysis
+#Let’s test the association between MOFA Factors and Gender, survival outcome (dead vs alive) and age:
+```{r}
+#install.packages("psych") # to compare with categorical
+
+correlate_factors_with_covariates(MOFAobject, 
+  covariates = c("Gender","died","age"), 
+  plot="log_pval"
+)
+```
+
+
+## Warning in correlate_factors_with_covariates(MOFAobject, covariates =
+## c("Gender", : There are non-numeric values in the covariates data.frame,
+## converting to numeric...
+####question??? what about t-test was it used for studying corrlelation between numeric and categorical(non-numeric?)
+
+
+##We will go back to associations with clinical information at the end of the vignette.
+
+
+#################### 5.2 Plot factor values
+
+#How do we interpret the factor values?
+#Each factor captures a different source of variability in the data. Mathematically, each Factor is defined by a linear combination of the input features. As the data is centered prior to running MOFA, each Factor ordinates cells along a one-dimensional axis that is centered at zero. Samples with different signs manifest opposite phenotypes along the inferred axis of variation, with higher absolute value indicating a stronger effect. Note that the interpretation of MOFA factors is analogous to the interpretation of the principal components in PCA.
+
+```{r}
+plot_factor(MOFAobject, 
+  factors = 1, 
+  color_by = "Factor1"
+)
+```
+
+#################### 5.3 Plot feature weights
+
+#How do we interpret the weights?
+#The weights provide a score for each feature on each factor. Features with no association with the corresponding factor are expected to have values close to zero, whereas features with strong association with the factor are expected to have large absolute values. The sign of the weights indicates the direction of the effect: a positive weights indicates that the feature has higher levels in the cells with positive factor values, and vice-versa.
+
+
+#######5.3.1 Plot feature weights for somatic mutations
+
+#By looking at the variance explained plot, we saw that Factor 1 captures variation in all data modalities. Out of all omics, the somatic mutation data is a good place to start, as somatic mutations are very sparse, easy to interpret and any change in the DNA is likely to have downstream consequences to all other molecular layers. Let’s plot the weights:
+
+
+```{r}
+plot_weights(MOFAobject,
+ view = "Mutations",
+ factor = 1,
+ nfeatures = 10,     # Top number of features to highlight
+ scale = T           # Scale weights from -1 to 1
+)
+```
+
+#Notice that most features lie at zero, indicating that most features have no association with Factor 1. There is however one gene that clearly stands out: IGHV (immunoglobulin heavy chain variable region). This is the main clinical marker for CLL.
+
+#An alternative visualistion to the full distribution of weights is to do a line plot that displays only the top features with the corresponding weight sign on the right:
+
+```{r}
+plot_top_weights(MOFAobject,
+ view = "Mutations",
+ factor = 1,
+ nfeatures = 10,     # Top number of features to highlight
+ scale = T           # Scale weights from -1 to 1
+)
+```
+
+#IGHV has a positve weight. This means that samples with positive Factor 1 values have IGHV mutation whereas samples with negative Factor 1 values do not have the IGHV mutation. To confirm this, let’s plot the Factor values and colour the IGHV mutation status.
+
+```{r}
+plot_factor(MOFAobject, 
+  factors = 1, 
+  color_by = "IGHV",
+  add_violin = TRUE,
+  dodge = TRUE
+)
+```
+#We can also plot Factor values coloured by other covariates, for example Gender. As shown above, this variable has no association with Factor 1:
+
+```{r}
+plot_factor(MOFAobject, 
+  factors = 1, 
+  color_by = "Gender",
+  dodge = TRUE,
+  add_violin = TRUE
+)
+```
+
+########### 5.3.2 Plot gene weights for mRNA expression
+
+#From the variance explained plot we know that Factor 1 drives variation across all data modalities. Let’s visualise the mRNA expression changes that are associated with Factor 1:
+
+```{r}
+plot_weights(MOFAobject, 
+  view = "mRNA", 
+  factor = 1, 
+  nfeatures = 10
+)
+```
+
+############5.3.3 Plot molecular signatures in the input data
+
+#In this case we have a large amount of genes that have large positive and negative weights. Genes with large positive values will be more expressed in the samples with IGHV mutation, whereas genes with large negative values will be more expressed in the samples without the IGHV mutation. Let’s verify this. The function plot_data_scatter generates a scatterplot of Factor 1 values (x-axis) versus expression values (y-axis) for the TOP 4 genes with largest POSITIVE weight. Samples are coloured by IGHV status:
+```{r}
+plot_data_scatter(MOFAobject, 
+  view = "mRNA",
+  factor = 1,  
+  features = 4,
+  sign = "positive",
+  color_by = "IGHV"
+) + labs(y="RNA expression")
+
+```
+#This function generates a scatterplot of Factor 1 values (x-axis) versus expression values (y-axis) for the top 4 genes with largest negative weight. Samples are coloured by IGHV status:
+
+```{r}
+plot_data_scatter(MOFAobject, 
+  view = "mRNA",
+  factor = 1,  
+  features = 4,
+  sign = "negative",
+  color_by = "IGHV"
+) + labs(y="RNA expression")
+```
+#An alternative visualisation is to use a heatmap
+
+```{r}
+plot_data_heatmap(MOFAobject, 
+  view = "mRNA",
+  factor = 1,  
+  features = 25,
+  cluster_rows = FALSE, cluster_cols = FALSE,
+  show_rownames = TRUE, show_colnames = FALSE,
+  scale = "row"
+)
+```
+# plot_data_heatmap has an interesting argument to “beautify” the heatmap:       denoise = TRUE.      Instead of plotting the (noisy) input data, we can plot the data reconstructed by the model, where noise has been removed:
+
+```{r}
+plot_data_heatmap(MOFAobject, 
+  view = "mRNA",
+  factor = 1,  
+  features = 25,
+  denoise = TRUE,
+  cluster_rows = FALSE, cluster_cols = FALSE,
+  show_rownames = TRUE, show_colnames = FALSE,
+  scale = "row"
+)
+```
+
+#######Characterisation of Factor 3
+
+#6.1 Plot feature weights
+
+#Following a similar strategy as for Factor 1, we notice that Factor 3 is also active in the somatic mutation view. Thus, there must be a mutation that underlies this phenotype. Let’s plot the corresponding weights:
+
+```{r}
+plot_weights(MOFAobject, 
+  view = "Mutations", 
+  factor = 3, 
+  nfeatures = 10,
+  abs = F
+)
+```
+#In this case we have two mutations that have large weight. One of them is the trisomy of chromosome 12, which is the second most important clinical marker in CLL!
+
+###################6.2 Plot Factor values
+
+#Let’s verify this by plotting the Factor values grouping samples by the presence or absence of trisomy12:
+
+```{r}
+plot_factor(MOFAobject, 
+  factors = 3, 
+  color_by = "trisomy12",
+  dodge = TRUE,
+  add_violin = TRUE
+)
+```
+#############6.3 Plot molecular signatures in the input data
+
+#Again, we can also inspect the molecular signatures in the input data with the functions plot_data_scatter and plot_data_heatmap:
+```{r}
+plot_data_scatter(MOFAobject, 
+  view = "Drugs",
+  factor = 3,  
+  features = 4,
+  sign = "positive",
+  color_by = "trisomy12"
+) + labs(y="Drug response (cell viability)")
+
+
+```
+
+```{r}
+plot_data_heatmap(MOFAobject, 
+  view = "mRNA",
+  factor = 3,  
+  features = 25,
+  denoise = TRUE,
+  cluster_rows = TRUE, cluster_cols = FALSE,
+  show_rownames = TRUE, show_colnames = FALSE,
+  scale = "row"
+)
+```
+#########7 Inspection of combinations of Factors
+#Now that we have characterised the etiology of the two main Factors, let’s explore them together:
+
+```{r}
+p <- plot_factors(MOFAobject, 
+  factors = c(1,3), 
+  color_by = "IGHV",
+  shape_by = "trisomy12",
+  dot_size = 2.5,
+  show_missing = T
+)
+
+p <- p + 
+  geom_hline(yintercept=-1, linetype="dashed") +
+  geom_vline(xintercept=(-0.5), linetype="dashed")
+
+print(p)
+```
+#This plot is extremely important. It classifies the patients into four different subgroups depending on their (multi-omic) molecular profile. As shown in the analysis above, both factors are associated with differences in the drug response assay they are are strongly linked to somatic mutations (IGHV and trisomy12) that are easy to profile in clinical practice. This is fantastic for the aim of personalised medicine.
+
+##############- 8 - Prediction of clinical subgroups
+
+#The scatterplot of Factor 1 vs Factor 3 reveals that a few samples are missing the somatic mutation status. In this case, the doctors were not able to classify patients into their clinical subgroups. But we can now use MOFA to exploit the molecular profiles and attempt to impute the IGHV and trisomy12 status.
+```{r}
+suppressPackageStartupMessages(library(randomForest))
+
+```
+
+```{r}
+# Prepare data
+df <- as.data.frame(get_factors(MOFAobject, factors=c(1,2))[[1]])
+
+# Train the model for IGHV
+
+df$IGHV <- as.factor(MOFAobject@samples_metadata$IGHV) 
+
+#You’re adding a column called IGHV to your data frame.
+#IGHV is your target variable — it tells you something about each sample (e.g. "Mutated" vs "Unmutated").
+#You convert it to a factor using as.factor(), which means:
+#“This is a category, not a number.”
+#It tells machine learning models to treat it as classification, not regression. #If you do use as.factor(), R understands:
+
+"These are just two different groups"
+"Use them as labels, not numbers"
+#Why is this important for machine learning?
+#You're training a model (a random forest) to predict IGHV, right?
+
+#model.ighv <- randomForest(IGHV ~ ., data = ...)
+#If IGHV is a factor, the model knows you're doing classification (e.g. Mutated vs Unmutated).
+#If IGHV is not a factor (just 0s and 1s), the model might think you’re doing regression (predicting numbers) — and that’s not what you want.
+
+model.ighv <- randomForest(IGHV ~ ., data=df[!is.na(df$IGHV),], ntree=10) ##IGHV is the target 
+#variable you are trying to predict.
+#  "." refers to all the latent factors (from the Z matrix) in df that will be used to predict IGHV.
+
+df$IGHV <- NULL 
+
+#df$IGHV <- NULL removes the IGHV column from the data frame after training the model.
+#You remove it to avoid mistakenly using the target variable (IGHV) as an input feature when making predictions later.
+#This ensures clean data for making future predictions or analysis without accidentally leaking information.
+
+
+# Do predictions
+```
+
+
+```{r}
+MOFAobject@samples_metadata$IGHV.pred <- stats::predict(model.ighv, df)
+```
+
+```{r}
+#exta step for understanding 
+head(MOFAobject@samples_metadata[, c("IGHV", "IGHV.pred")])
+
+```
+```{r}
+# Train the model for Trisomy12
+df$trisomy12 <- as.factor(MOFAobject@samples_metadata$trisomy12)
+model.trisomy12 <- randomForest(trisomy12 ~ ., data=df[!is.na(df$trisomy12),], ntree=10)
+df$trisomy12 <- NULL
+
+MOFAobject@samples_metadata$trisomy12.pred <- stats::predict(model.trisomy12, df)
+
+
+```
+
+
+```{r}
+#Plot predictions for IGHV
+
+MOFAobject@samples_metadata$IGHV.pred_logical <- c("True","Predicted")[as.numeric(is.na(MOFAobject@samples_metadata$IGHV))+1]
+
+#idea about code:
+#===============
+#Adds a new column to your sample  metadata. It says whether each sample’s IGHV label is:
+
+#"True" (if the original label is known), or
+#"Predicted" (if the label was missing and predicted by #the model)
+
+#Adding +1:
+#So we turn:
+#FALSE → 0 + 1 = 1
+#TRUE → 1 + 1 = 2
+#i.e If IGHV is not NA, index is 1 → "True"
+#If IGHV is NA, index is 2 → "Predicted"
+
+###details of code: Let’s unpack this:
+#=====================================
+#MOFAobject@samples_metadata is a table that holds info about each sample (like metadata).
+#IGHV is your true label (e.g., “Mutated” or “Unmutated”, shown as 0 in 1 when i checked MOFAobject@samplesmetadata by clicking on samples_metadata dataframe inside MOFAobject).
+#is.na(...) checks which samples are missing IGHV values (i.e., need to be predicted).
+#as.numeric(...) turns TRUE/FALSE into 1/0 — so TRUE (missing) becomes 1, and FALSE (not missing) becomes 0.
+#+1 shifts the values to become 1 (not missing) and 2 (missing)
+#Then you're indexing into this:
+#c("True", "Predicted")[ ... ]
+#So you get:
+
+#"True" for samples with actual IGHV labels
+#"Predicted" for samples where IGHV was missing and #predicted by your model
+#This line creates a label to tell which samples are real vs predicted.
+
+p <- plot_factors(MOFAobject, 
+  factors = c(1,3), 
+  color_by = "IGHV.pred",
+  shape_by = "IGHV.pred_logical",
+  dot_size = 2.5,
+  show_missing = T
+  
+)
+#Makes a plot where:
+
+#Each dot is a sample
+#X-axis = Factor 1, Y-axis = Factor 3
+#Dot color = predicted IGHV label (e.g. “Mutated”, “Unmutated”)
+#Dot shape = "True" or "Predicted" (based on whether IGHV was known or not)
+#Missing samples still appear in the plot
+
+p <- p + 
+  geom_hline(yintercept=-1, linetype="dashed") +
+  geom_vline(xintercept=(-0.5), linetype="dashed")
+
+#Adds horizontal and vertical dashed lines to help visually separate different areas in the plot.
+
+
+print(p) # show the plot
+```
+# colour: 
+#=======
+#mutated by IGHV or not, 
+#
+#shape :
+#======
+#One shape = "True" (real IGHV label was available)
+#Another shape = "Predicted" (IGHV label was missing and guessed)
+
+# plot shows how samples group based on MOFA factors.
+
+#Color indicates the predicted IGHV status (e.g., Mutated vs Unmutated).
+#Shape shows whether the IGHV label was known (‘True’) or predicted (‘Predicted’).
+#Predicted samples that cluster with true-labeled ones suggest the model made reliable predictions.”
+
+
+
+
+
+###################### -9- Gene set enrichment analysis (GSEA)
+
+#In addition to exploring the individual weights for each factor, we can use enrichment analysis to look for signiificant associations of factors to genesets. Here, we use the Reactome genesets for illustrations, which is contained in the MOFAdata package. For more details on how the GSEA works we encourage the users to read the GSEA vignette
+
+############9.1 Load Reactome gene set annotations.
+
+#Gene set annotations are provided as a binary membership matrix. Genes are stored in the rows, pathways are stored in the columns. A value of 1 indicates that gene 𝑗 belongs to the pathway 𝑖.
+
+```{r}
+utils::data(reactomeGS)
+
+head(colnames(reactomeGS))
+
+```
+```{r}
+head(rownames(reactomeGS))
+dim(reactomeGS)
+```
+########################9.2 Run enrichment analysis
+
+#These are the steps for doing Gene Set Enrichment Analysis (GSEA) with MOFA:
+
+#(1) Define your gene set matrix: this can be specified as a binary matrix where rows are gene sets and columns are genes. A value of 1 indicates that gene j belongs to pathway i. A value of 0 indicates elsewise.
+
+#(2) Select a gene set statistic: the statistic used to quantify the scores at the pathway level. Must be one of the following: mean.diff (difference in the average weight between foreground and background genes) or rank.sum (difference in the sum of ranks between foreground and background genes).
+
+#(3) Select a statistical test: the statistical test used to compute the significance of the gene set statistics under a competitive null hypothesis. Must be one of the following: parametric (a simple and very liberal parametric t-test), cor.adj.parametric (parametric t-test adjusted by the correlation between features), permutation (unparametric, the null distribution is created by permuting the weights. This option is computationally expensive, but it preserves the correlation structure between features in the data.).
+
+#******An important consideration when running GSEA is:
+#=====================================================
+#that MOFA contains positive and negative weights. There will be cases where the genes with negative weights all belong to a specific pathway but genes with positive weights belong to other pathways. If this is true, doing GSEA with all of them together could dilute the signal. Hence, we recommend the user to do GSEA separately for (+) and (-) weights, and possibly also jointly with all weights.
+
+```{r}
+# GSEA on positive weights, with default options
+res.positive <- run_enrichment(MOFAobject, 
+  feature.sets = reactomeGS, 
+  view = "mRNA",
+  sign = "positive"
+)
+```
+```{r}
+# GSEA on negative weights, with default options
+res.negative <- run_enrichment(MOFAobject, 
+  feature.sets = reactomeGS, 
+  view = "mRNA",
+  sign = "negative"
+)
+```
+#The enrichment analysis returns a list of 5 elements:
+
+#feature.sets: the feature set matrix filtered by the genes that overlap with the MOFA model.
+#pval: the nominal p-values.
+#pval.adj: the FDR-adjusted p-values.
+#feature.statistics: the feature statistics (i.e. the weights).
+#set.statistics: matrices with the gene set statistics.
+#sigPathways: list with significant pathways per factor at a specified FDR threshold
+
+
+```{r}
+names(res.positive)
+```
+
+
+
+#######9.2.1 Plot enrichment analysis results
+
+#Plot an overview of the number of significant pathways per factor.
+#It seems that most of the Factors do not have clear gene set signatures. A clear exception is Factor 4 , which has a very strong enrichment for genes with positive weights.
+
+```{r}
+plot_enrichment_heatmap(res.positive)
+```
+```{r}
+plot_enrichment_heatmap(res.negative)
+```
+#Let’s plot the GSEA results for Factor 4 . It seems that this Factor is capturing differences in the stress response of the blood cells.
+
+```{r}
+plot_enrichment(res.positive, factor = 4, max.pathways = 15)
+
+```
+###Antimicrobial peptides######
+
+# we are interested in studying Antimicrobial peptides in leukemia so , we need to see which genes contribute to the AMP pathway.
+# to explore the genes involved:
+```{r}
+# Get the gene names involved in the "Antimicrobial Peptides" pathway
+grep("antimicro", rownames(reactomeGS), value = TRUE, ignore.case = TRUE)
+
+amp_genes <- colnames(reactomeGS)[reactomeGS["Antimicrobial peptides", ] == 1]
+class(amp_genes)
+cat(amp_genes, sep = " ")
+```
+```{r}
+#extra get get names from ensemble id
+# Install and load biomaRt (if you haven't)
+if (!requireNamespace("biomaRt", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install("biomaRt")
+
+library(biomaRt)
+```
+
+
+```{r}
+mart <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
+
+#This connects to the Ensembl database for human genes.
+```
+
+```{r}
+#Map your amp_genes (Ensembl IDs) to gene symbols
+amp_gene_info <- getBM(
+  attributes = c("ensembl_gene_id", "hgnc_symbol"),
+  filters = "ensembl_gene_id",
+  values = amp_genes,
+  mart = mart
+)
+
+
+
+ # note values= amp_genes
+```
+
+#The "top genes" driving a pathway like “Antimicrobial Peptides” are usually reflected in gene expression.To identify the top AMP genes driving Factor 4, use the mRNA view.These are the genes whose expression levels most strongly correlate with that factor.
+
+#Get weights for AMP genes from mRNA view
+```{r}
+weights_mrna <- get_weights(MOFAobject, view = "mRNA", factor = 4)
+str(weights_mrna)
+#from structure: str(weights_mrna)
+#List of 1
+# $ mRNA: num [1:5000, 1] ...
+#This means:
+
+#weights_mrna is not a matrix — it's a list
+#The actual matrix is inside: weights_mrna$mRNA
+
+# Step 1: Extract the actual matrix
+mRNA_weights <- weights_mrna$mRNA  # this is the [5000 x 1] matrix
+
+# Step 2: Subset for AMP genes
+amp_weights <- mRNA_weights[rownames(mRNA_weights) %in% amp_genes, , drop = FALSE]
+
+#extra
+dim(amp_weights)
+# Step 3: Sort by absolute weight
+amp_weights_sorted <- amp_weights[order(abs(amp_weights), decreasing = TRUE), , drop = FALSE]
+
+# Step 4: See top AMP genes driving Factor 4
+head(amp_weights_sorted)
+```
+
+
+```{r}
+#Want to go one step further and plot them or compare across IGHV groups
+
+ #Plot Top AMP Genes from Factor 4
+library(ggplot2)
+
+# Step 1: Convert the weights to a data frame
+top_n <- 20  # Number of top genes to plot
+top_amp_df <- data.frame(
+  gene = rownames(amp_weights_sorted)[1:top_n],
+  weight = amp_weights_sorted[1:top_n, 1]
+)
+
+# Step 2: Plot using ggplot2
+ggplot(top_amp_df, aes(x = reorder(gene, weight), y = weight)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Top AMP Genes Driving Factor 4 (mRNA view)",
+    x = "Gene",
+    y = "Factor Weight"
+  ) +
+  theme_minimal()
+```
+```{r}
+class(amp_gene_info)
+```
+
+
+```{r}
+#1. Convert amp_weights_sorted to a data frame with gene IDs
+amp_weights_df <- data.frame(
+  ensembl_gene_id = rownames(amp_weights_sorted),
+  weight = amp_weights_sorted[, 1]
+)
+
+#Join with your amp_gene_info
+library(dplyr)
+
+annotated_weights <- amp_weights_df %>%
+  inner_join(amp_gene_info, by = "ensembl_gene_id") %>%
+  filter(hgnc_symbol != "") %>%
+  arrange(desc(abs(weight)))
+
+# Plot top N AMP genes (now with gene symbols)
+top_n <- 20
+top_annotated <- head(annotated_weights, top_n)
+
+ggplot(top_annotated, aes(x = reorder(hgnc_symbol, weight), y = weight)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Top AMP Genes Driving Factor 4 (Gene Symbols)",
+    x = "Gene Symbol",
+    y = "Factor Weight"
+  ) +
+  theme_minimal()
+```
+
+
+#####extra by me (not done it is extra)
+# get the Drug feature matrix to link to AMP Also if treated patients are shown , to know which AMP helps in treatment.
+
+```{r}
+####extra not done#### 
+#Use get_data() to extract the expression/activity matrix for that view:
+
+
+drug_data <- get_data(MOFAobject, view = "Drugs")
+str(drug_data)
+class(drug_data)
+ #Extract the Data Matrix
+
+#The drug_data is a list containing another list (group1), so the actual matrix is inside that. To extract it:
+
+drug_matrix <- drug_data$Drugs$group1
+#Now drug_matrix is a 310 x 200 matrix where rows are samples and columns are drugs.
+dim(drug_matrix)  # Should be 310 samples by 200 drugs
+
+#what are sample names are there control and treatment shown in te drug_matrix?
+
+colnames(drug_matrix)
+
+#
+#check drug names from row names
+rownames(drug_matrix)
+```
+
+```{r}
+head(amp_weights_sorted)
+head(CLL_metadata)
+```
+```{r}
+#show the top expressed AMP genes (that drive Factor 4) from samples that were treated from (treatedAfter in CLL_metadata)
+
+#Get mRNA expression data for these genes (per sample)
+# Get the mRNA view from the MOFA model
+
+
+mRNA_data <- get_data(MOFAobject, view = "mRNA")
+
+class(mRNA_data)
+names(mRNA_data)
+#from names function: mRNA_data is a named list with one element named "mRNA" — meaning your actual expression matrix is nested one level deeper inside that list.
+
+#mRNA_data[["mRNA"]] is still a list, because you’re dealing with multi-group data in MOFA.
+
+#So here's the real structure:
+
+#get_data(MOFAobject, view = "mRNA") → returns a list of views per group
+
+#Inside that:
+#mRNA_data[["mRNA"]] → another list, one element per group (like "group1", "group2"...)
+
+#Check what's inside
+
+names(mRNA_data[["mRNA"]]) #You'll see the names of the groups, here: "group1
+#Step-by-step plan
+
+#access the actual mRNA matrix
+mRNA_expression <- mRNA_data[["mRNA"]][["group1"]]
+ 
+
+#  # Step 1: Extract top AMP genes (already sorted)
+top_amp_genes <- rownames(amp_weights_sorted)  #  top 22 AMP genes from amp_weights_sorted matrix.
+
+# Step 2: Get treated samples from metadata
+treated_samples <- CLL_metadata$sample[CLL_metadata$treatedAfter == TRUE]
+
+# Step 1: Extract top AMP genes (already sorted)
+top_amp_genes <- rownames(amp_weights_sorted)  # top 22 AMP genes from amp_weights_sorted matrix.
+
+# Step 2: Get treated samples from metadata
+treated_samples <- CLL_metadata$sample[CLL_metadata$treatedAfter == TRUE]
+
+# Step 3: Ensure top_amp_genes are in mRNA_expression rownames
+top_amp_genes <- top_amp_genes[top_amp_genes %in% rownames(mRNA_expression)]
+if (length(top_amp_genes) == 0) {
+  stop("No top AMP genes found in mRNA_expression.")
+}
+
+# Step 4: Ensure treated_samples are in mRNA_expression colnames
+treated_samples <- treated_samples[treated_samples %in% colnames(mRNA_expression)]
+if (length(treated_samples) == 0) {
+  stop("No treated samples found in mRNA_expression.")
+}
+
+# Step 5: Subset the mRNA expression matrix
+treated_amp_expr <- mRNA_expression[top_amp_genes, treated_samples, drop = FALSE]
+
+
+
+
+
+# Step 6: Compute the mean expression of AMP genes across the treated samples
+mean_expression <- rowMeans(treated_amp_expr, na.rm = TRUE)  # Now using the correct 'treated_amp_expr'
+
+# Step 7: Sort the genes by their mean expression, in decreasing order
+top_expressed_amp_genes <- sort(mean_expression, decreasing = TRUE)  # Using the correct 'mean_expression'
+
+# Step 8: Print the result - top AMP genes with the highest expression in treated patients
+print("Top AMP genes from Factor 4 with highest expression in treated patients:")
+print(top_expressed_amp_genes)
+
+class(CLL_metadata)
+class(amp_weights_sorted)
+dim(amp_weights_sorted)
+
+```
+
+```{r}
+class(CLL_metadata$treatedAfter)
+class(CLL_metadata$died)
+```
+
+######treat vs untreat link with amp ### #=======================================
+
+####compare samples treatedAfter TRUE vs FALSE then link with samples and amp_genes obtained after pathway enrichment with factor 4
+
+
+```{r}
+#Step 1: Define the comparison metadata
+
+#we want to focus on:
+# 1- Compare treatedAfter groups (TRUE vs FALSE)
+# 2- Specifically test for differential expression in AMP-related genes
+# 3- Possibly use limma or a suitable alternative
+
+#STEP 1:Extract expression matrix (e.g., mRNA view)
+
+mRNA_data <- get_data(MOFAobject, view = "mRNA")
+class(mRNA_data)
+names(mRNA_data)
+
+
+
+#Step 2: Get metadata (treatedAfter)
+treated <- MOFAobject@samples_metadata$treatedAfter
+
+#Make sure it's the same length as the number of columns (samples) in mRNA_data:
+
+names(mRNA_data[["mRNA"]]) #You'll see the names of the groups, here: "group1
+#Step-by-step plan
+
+#access the actual mRNA matrix
+mRNA_expression <- mRNA_data[["mRNA"]][["group1"]]
+
+
+length(treated) == ncol(mRNA_data[["mRNA"]][["group1"]])  # Should return TRUE
+
+ 
+ 
+ 
+
+
+
+
+```
+
+###
+#Step 3: 
+#setequal showed TRUE .This tells us that the AMP genes driving Factor 4 (amp_weights_sorted) are exactly the same genes as our AMP genes found in the expression matrix (matched_amp_genes) — no extras, no missing ones.We can confidently use these genes for downstream analysis (like limma, heatmaps, volcano plots, etc.) without worrying about mismatches.
+
+#Step 4: Create design matrix for limma
+#This defines the contrast: treatedAfter == TRUE vs FALSE.
+
+
+
+
+
+
+
+
+
+####Subset to AMP genes only
+#Let’s say your antimicrobial peptide genes are stored in a vector:
+
+#amp_genes <- c("GENE1", "GENE2", "GENE3", ...)  # replace with real gene names
+#Make sure the gene names match the rownames of the matrix:
+
+
+```{r}
+
+
+
+# Align metadata
+##Set the correct sample names as row names
+metadata_MOFA <- MOFAobject@samples_metadata
+
+rownames(metadata_MOFA) <- metadata_MOFA[[1]]
+head(rownames(metadata_MOFA))
+# Should return something like: "H045", "H109", etc.
+
+# assumes sample names are in column 1
+
+
+#  Created mRNA_amp (expression matrix for AMP genes)
+mRNA_amp <- mRNA_expression[top_amp_genes, ]  # Ensure 'top_amp_genes' is defined
+
+#  Subset metadata_MOFA based on the columns of mRNA_amp (sample IDs)
+metadata_mRNA_amp <- metadata_MOFA[colnames(mRNA_amp), ]
+
+
+# Check what sample names you're trying to match
+head(colnames(mRNA_amp))                      # sample names from expression matrix
+head(rownames(MOFAobject@samples_metadata))
+View(MOFAobject@samples_metadata)
+# sample names in metadata
+
+
+matched_amp_genes <- intersect(amp_genes, rownames(mRNA_expression))
+
+setequal(rownames(amp_weights_sorted), matched_amp_genes)
+
+mRNA_amp <- mRNA_expression[matched_amp_genes, ]
+
+ ncol(mRNA_amp) == nrow(metadata_mRNA_amp )  # should be TRUE 
+```
+
+#####important note:
+#===============
+#ncol(mRNA_amp) == nrow(metadata_mRNA_expression )  
+#[1] TRUE
+#So we must create group and design based on metadata_mRNA_expression, not treated or any other earlier object.
+
+
+```{r}
+
+
+ #  Get the shared sample names between mRNA and metadata
+common_samples_mRNA_ampWmetadata_MOFA<- intersect(colnames(mRNA_amp), rownames(metadata_MOFA))
+
+#  Subset expression and metadata to these common samples
+mRNA_amp <- mRNA_amp[, common_samples_mRNA_ampWmetadata_MOFA]
+metadata_mRNA_amp <- metadata_MOFA[common_samples_mRNA_ampWmetadata_MOFA, ]
+
+```
+
+
+
+```{r}
+
+#install.packages("factoextra") # to use fviz_cluster() function 
+
+#install.packages("gridExtra")
+
+library(cluster)
+library(factoextra)
+library("gridExtra")
+
+class(mRNA_amp) #since mRNA_amp is a matrix not dataframe, therefoe I cannot use dplyr.
+
+#wrong to use complete.cases because each row contains one N.A so all rows are removed 
+#wrong method:mRNA_amp_cleanMatrix<-mRNA_amp[complete.cases(mRNA_amp), ] # NAs removes for clean numeric matrix before clustering
+
+mRNA_amp_cleanMatrix <- mRNA_amp[, colSums(is.na(mRNA_amp)) == 0]
+
+dim(mRNA_amp_cleanMatrix)
+dim(mRNA_amp)
+
+amp_kmeans2<-kmeans(mRNA_amp_cleanMatrix, centers=2, nstart=25)
+amp_kmeans2$cluster
+table(amp_kmeans2$size)
+
+amp_kmeans3<-kmeans(mRNA_amp_cleanMatrix,centers=3, nstart=25)
+
+amp_kmeans4<-kmeans(mRNA_amp_cleanMatrix,centers=4, nstart=25)
+
+amp_kmeans5<- kmeans(mRNA_amp_cleanMatrix, centers=5, nstart=25)
+
+###comparing clusterin plots
+
+plot_amp_2clusters<-fviz_cluster(amp_kmeans2, geom="point", data=mRNA_amp_cleanMatrix) + ggtitle("k=2")
+
+plot_amp_3clusters<-fviz_cluster(amp_kmeans3, geom="point", data=mRNA_amp_cleanMatrix) + ggtitle("k=3")
+
+plot_amp_4clusters<-fviz_cluster(amp_kmeans4 , geom= "point", data=mRNA_amp_cleanMatrix) + ggtitle("k=4")
+
+plot_amp_5clusters<-fviz_cluster(amp_kmeans5 , geom="point", data=mRNA_amp_cleanMatrix)+ 
+  ggtitle("k=5")
+
+grid.arrange(plot_amp_2clusters,plot_amp_3clusters,plot_amp_4clusters, plot_amp_5clusters)
+```
+
+########## Limma to get amp (treated vs untreated DEGS)########################
+
+```{r}
+library(limma)
+
+
+
+dim(mRNA_amp)         # genes x samples
+dim(metadata_MOFA)    # samples x metadata variables
+
+#Subset expression data after checking for NAs
+#===================================
+#Step 1: Start with full metadata and check for NA in treatedAfter:
+#=========================
+table(is.na(metadata_MOFA$treatedAfter))  # See how many are missing
+
+
+#Remove samples with NA in treatedAfter
+#====================================
+# Keep only samples with non-NA treatment info
+#Remove samples with NA in treatedAfter
+
+# Keep only samples with non-NA treatment info
+metadata_clean_treatedAfter <- metadata_MOFA[!is.na(metadata_MOFA$treatedAfter), ]
+dim(metadata_clean_treatedAfter)
+
+
+# Second aligning step: Get common sample names (present in both expression and metadata)
+#====================================
+common_samples <- intersect(colnames(mRNA_amp), rownames(metadata_clean_treatedAfter))
+
+#Third aligning step: Subset both datasets to only those common samples
+mRNA_amp_subset <- mRNA_amp[, common_samples]  # subset expression matrix
+metadata_mRNA_amp_subset <- metadata_clean_treatedAfter[common_samples, ]  # subset metadata
+
+
+##fourth aligning step: Confirm alignment
+#===============================
+stopifnot(all(colnames(mRNA_amp_subset)== rownames(metadata_mRNA_amp_subset)))
+```
+
+
+
+```{r}
+
+## Define treatment groups (treatedAfter: TRUE or FALSE)
+#============================
+
+
+ group <- factor(metadata_mRNA_amp_subset$treatedAfter, levels = c(FALSE, TRUE))
+View(group)
+str(group)
+levels(group)
+table(group)
+# TRUE is the condition of interest ,FALSE = untreated (reference)
+
+##Create design matrix with no intercept (1 column per group)
+#=====================================
+
+design <- model.matrix(~ 0 + group)
+colnames(design)
+
+View(design)
+dim(design)
+
+##Define contrast: Treated vs Untreated
+#======================================
+contrast<-makeContrasts(Treated_vs_Untreated = groupTRUE - groupFALSE, levels = design)
+
+
+
+
+
+# Run the linear model with limma
+#=================================
+
+fit <- lmFit(mRNA_amp_subset, design)
+fit2<- contrasts.fit(fit, contrast)
+fit2<- eBayes(fit2)
+
+
+# Get all differential genes sorted by p-value
+
+
+
+DEGS_amp_treated <- topTable(fit2, coef = "Treated_vs_Untreated", number = Inf, sort.by ="p")
+
+View(DEGS_amp_treated)
+head(DEGS_amp_treated)
+dim(DEGS_amp_treated)
+
+#This gives you a data frame with:
+
+#logFC (log fold change)
+#AveExpr (average expression)
+#P.Value
+#adj.P.Val (FDR adjusted)
+#etc.
+```
+
+#####AMP DEGS with treated(cured) patient vs untreated
+
+```{r}
+#BiocManager::install("EnhancedVolcano")
+library(EnhancedVolcano)
+
+####View top DEGS and put their name in volcano plot later
+#==================================================
+# Filter significant DEGs (adj.P.Val < 0.05 and |logFC| > 1)
+####need to correct logFC >1############
+
+######also need to corrected logFC 
+
+DEGS_amp_treated_sig <- DEGS_amp_treated[
+  DEGS_amp_treated$adj.P.Val < 0.1 & abs(DEGS_amp_treated$logFC) > 0.5, 
+]
+
+
+# Sort by adjusted p-value (most significant first)
+DEGS_amp_treated_sorted <- DEGS_amp_treated_sig[order(DEGS_amp_treated_sig$adj.P.Val), ]
+
+# View top 10 DEGs
+top_10_amp_genes <- head(DEGS_amp_treated_sorted, 10)
+print(top_10_amp_genes)
+
+
+
+
+
+
+```
+
+```{r}
+EnhancedVolcano(
+  DEGS_amp_treated,
+  lab = rownames(DEGS_amp_treated),  # Gene labels
+  x = 'logFC',                       # X-axis: log2 fold change
+  y = 'adj.P.Val',                   # Y-axis: Adjusted p-value (not "FDR")
+  pCutoff = 0.1,                     # adj.P.Val cutoff (matches filtering)
+  FCcutoff = 0.5,                    # LogFC cutoff
+  title = "Volcano Plot (adj.P.Val < 0.1, |logFC| > 0.5)",
+  subtitle = "Differentially Expressed Genes (Adjusted P-Values)",
+  caption = "Adjusted p-value cutoff = 0.1",  # Updated caption
+  colAlpha = 0.7,                    # Transparency
+  pointSize = 3,
+  labSize = 4,
+  legendLabels = c("NS", "LogFC", "adj.P.Val", "adj.P.Val & LogFC"),  # Fixed legend
+  legendPosition = "right",
+  drawConnectors = TRUE,             # Connect labels to points
+  widthConnectors = 0.5,
+  cutoffLineType = "dashed",         # Add threshold lines
+  cutoffLineCol = "red"
+)
+```
+
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+
+# Assuming your data frame is DEGS_amp_treated with columns logFC and adj.P.Val
+DEGS_amp_treated$Significance <- ifelse(
+  DEGS_amp_treated$adj.P.Val < 0.1 & abs(DEGS_amp_treated$logFC) > 0.5,
+  "Significant", 
+  "Not Significant"
+)
+
+# Create the volcano plot
+ggplot(DEGS_amp_treated, aes(x = logFC, y = -log10(adj.P.Val), color = Significance)) +
+  geom_point(alpha = 0.7, size = 3) +  # Plot the points
+  scale_color_manual(values = c("Not Significant" = "gray", "Significant" = "red")) +  # Custom colors
+  labs(
+    title = "Volcano Plot: Treated vs Untreated",
+    subtitle = "Differential Expression of AMP Genes",
+    x = "Log2 Fold Change",
+    y = "-Log10(Adjusted P-value)",
+    caption = "Thresholds: p < 0.1 & |logFC| > 0.5"
+  ) +
+  theme_minimal() +  # Clean theme
+  theme(legend.position = "top") +  # Position legend at the top
+  geom_text_repel(aes(label = ifelse(Significance == "Significant", rownames(DEGS_amp_treated), "")), 
+                  size = 3, box.padding = 0.5)  # Add labels for significant genes
+
+```
+
+## change ensemble IDs of top significant DEGS to gene names using amp_gene_info dataframe created before.
+```{r}
+library(dplyr)
+
+#Get ensembl IDs from rownames
+ensemble_chosen_DEGS<-rownames(DEGS_amp_treated_sorted)
+print(ensemble_chosen_DEGS)
+
+#filter AMP_gene_info to get matching gene symvol
+ensembl_to_gene_chosenAMPS<-amp_gene_info %>% filter(ensembl_gene_id %in% ensemble_chosen_DEGS)
+
+print(ensembl_to_gene_chosenAMPS)
+
+```
+
+#inner join of annotation gene
+```{r}
+
+library(tibble)
+
+# Step 1: Convert rownames of DEGs to a column so you can join on Ensembl IDs
+DEGS_amp_treated_annotated <- DEGS_amp_treated_sorted %>%
+  rownames_to_column(var = "ensembl_gene_id") %>%
+
+  # Step 2: Inner join with gene symbol info
+  inner_join(amp_gene_info, by = "ensembl_gene_id")
+print(DEGS_amp_treated_annotated)
+```
+
+```{r}
+?data.frame
+manual_topAMPgene_map <- data.frame(
+  ensembl_gene_id = c("ENSG00000112486", "ENSG00000164821", "ENSG00000148346"),
+  hgnc_symbol = c("CCR6", "DEFA4", "LCN2"), logFC = c(-0.7043825,0.5582248,0.6728671),
+  stringsAsFactors = FALSE
+)
+print(manual_topAMPgene_map)
+```
+
+
+```{r}
+sig_only_AMP_DEGS<- DEGS_amp_treated %>% filter(adj.P.Val<0.1)
+print(sig_only_AMP_DEGS)
+```
+
+############- 10- customized analysis
+
+# For customized exploration of weights and factors, you can directly fetch the variables from the model using ‘get’ functions: get_weights, get_factors and get_data:
+
+```{r}
+weights <- get_weights(MOFAobject, 
+  views = "all", 
+  factors = "all", 
+  as.data.frame = TRUE 
+)
+head(weights)
+
+```
+
+```{r}
+factors <- get_factors(MOFAobject, 
+  factors = "all", 
+  as.data.frame = TRUE
+)
+head(factors)
+```
+```{r}
+data <- get_data(MOFAobject, 
+  views = "all", 
+  as.data.frame = TRUE
+)
+head(data)
+```
+
+############EXTRA WORK NOT LINKED TO AMP #########################
+
+############ -11-Imputation of missing values
+
+
+```{r}
+class(MOFAobject)
+
+
+```
+
+#What impute() actually does:
+#This adds a new slot called @imputed_data to your existing MOFAobject.
+#Your original data in MOFAobject@data remains untouched.
+#So unless you explicitly use get_imputed_data() or access @imputed_data, you are still working with the original (incomplete) data.
+
+##Why impute data at all?
+
+#Imputation is all about filling in missing values in a meaningful, model-driven way. Here’s when and why it’s useful:
+
+#1. Visualization and downstream analysis
+
+#2. Machine learning or statistics
+#Many methods can’t handle missing values.
+#Imputed values let you apply those methods (like regression, PCA, or network inference) smoothly.
+
+##note:
+#=====
+#If you're not interested in estimating values you never measured, you might not need to use imputation
+
+
+#####With the impute function all missing values are imputed based on the MOFA model. The imputed data is then stored in the imputed_data slot of the MOFAobject and can be accessed via the get_imputed_data function.
+
+```{r}
+#I pressed impute (MOFAobject) twice which made a repeating problem. to fix this we assign an empty list like the code below written as a comment.
+
+##problemfix********
+#MOFAobject@imputed_data <- list()
+
+#####note code impute is below#######
+#MOFAobject <- impute(MOFAobject).  #
+####***.......................#######
+```
+
+```{r}
+length(MOFAobject@data$mRNA)
+#If this returns 1, then you have just one group, and:
+
+#MOFAobject@data$mRNA[[1]]
+#is the correct and only matrix you need to use.
+
+
+#Another method is to get group names
+names(MOFAobject@data$mRNA)
+#This will return something like:
+
+#result is  "group1"
+#Which also confirms that there's only one group.
+
+
+
+
+
+#Before imputation
+
+MOFAobject@data$mRNA[[1]][1:5,190:195]
+
+#MOFAobject@data$mRNA
+#This is not a matrix — it’s a list of matrices (usually one per group).
+
+#So we can’t subset it like a matrix until you extract one matrix from the list.
+
+
+# It is totally standard in R when working with lists of matrices — the first set of brackets [[...]] pulls the matrix out of the list, and the second set [...] is used to subset that matrix.
+#[[1]] is grabbing the actual matrix (genes × samples) for the first group.
+```
+
+```{r}
+#After imputation
+
+# the code commented below didnot work because MOFAobject@imputed_data$mRNA[[1]] is a matrix
+#MOFAobject@imputed_data$mRNA[[1]][["mean"]][1:5,190:195]
+
+
+str(MOFAobject@imputed_data$mRNA[[1]])
+# result: num[1:5000, 1:200]  means it is a matrix
+#If it’s a matrix (or atomic vector), access it directly using [1:5, 190:195] without $group1.
+#Optionally, use dimnames() to inspect row (gene) and column (sample) names.
+
+imputed_values <- MOFAobject@imputed_data$mRNA[[1]][1:5, 190:195]
+print(imputed_values)
+#Check structure of MOFAobject@imputed_data$mRNA[[1]] using str().
+#If it’s a matrix (or atomic vector), access it directly using [1:5, 190:195] without $group1.
+#Optionally, use dimnames() to inspect row (gene) and column (sample) names.
+
+
+
+names(MOFAobject@imputed_data$mRNA[[1]])
+
+MOFAobject <- impute(MOFAobject)
+
+imputed <- get_imputed_data(MOFAobject, view = "mRNA", groups = "all")
+
+length(imputed)
+# If 1 → you have one group
+
+names(MOFAobject@imputed_data)
+#result is: [1] "Drugs"       "Methylation"
+#[3] "mRNA"        "Mutations" 
+
+
+```
+##############- 12- Building predictive models of clinical outcome
+
+#The factors inferred by MOFA can be related to clinical outcomes such as time to treatment or survival times. As this type of data is censored (not for all samples we have already observed the event) we will use Cox models for this purpose. In a Cox proportional hazards model we model the hazard of an event ocurring (e.g. death or treatment) as a function of some covariates (here the factors). If a factor has a influence on the surivival time or time to treatment it will receive a high absoulte coefficient in the Cox model. In particular:
+
+#If the coefficient is positive, samples with large factor values have an increased hazard (of death or treatment) compared to samples with small factor values.
+#If the coefficient is negative, samples with small factor values have an increased hazard compared to samples with a large factor values.
+#To fit these models we will use the coxph function in the survival package. The survival data is stored in a survival object that contains both the time a sample has been followed up and whether the event has occured (as 0,1).
+
+#Let’s take time to treatment as an example here. The sample metadata contains the follow-up times per sample in years in the column TTT, and the column treatedAfter indicated whether a treatment occured.
+
+############# -12.0.1 Fit Cox models
+
+
+##***Important note: 
+#===================
+#Survival analysis doesn't care if the treatment worked — it only tracks when the event occurred.
+
+
+
+
+###note: Real-Life Analogy
+#=========================
+#Imagine we're watching patients in a clinic:
+
+#Some get treated quickly
+#Some take years
+#Some never get treated (during our study)
+#we’re trying to figure out:
+
+#“Are there biological patterns (from omics) that can predict who will need treatment sooner?”
+#MOFA gives those patterns (factors), and the Cox model tells us which ones really matter for predicting treatment timing.
+
+
+
+
+
+```{r}
+library(survival)
+#install.packages("survminer")
+
+library(survminer)
+```
+#note:
+#====
+#both the survival and survminer packages define an object called myeloma, and survminer’s version is the one currently active (i.e., it'll be used if you type myeloma). It's nothing to worry about unless you were using the myeloma dataset or function from the survival package specifically.
+
+```{r}
+SurvObject <- Surv(MOFAobject@samples_metadata$TTT, MOFAobject@samples_metadata$treatedAfter)
+#Inside the Surv() function:
+#Surv(time, event)
+#time → how long you followed each patient/sample
+#event → whether the event you're studying happened or not (1 = yes, 0 = no). R will automatically convert TRUE to 1 (event occurred) and FALSE to 0 (censored), so this will still work.
+
+Z <- get_factors(MOFAobject)[[1]] # note that  [[1]] is because I only have group1. if i have another group (not here , then I can use [[2]] for example)
+
+
+#That matrix contains:
+
+#Rows = samples
+#Columns = MOFA factors (e.g. Factor1, Factor2, ..., Factor15)
+#These are hidden patterns learned from our multi-omics data.
+
+#we’re basically saying:
+
+"Let’s see which of these hidden patterns are related to the time until treatment."
+
+
+#### Why? do this and use Z <- get_factors(MOFAobject)[[1]]    
+
+#we want to know:
+
+#Are there patterns in the omics data that are associated with disease progression?
+#Could some factors predict earlier or later treatment?
+#Could these be useful biomarkers?
+
+
+fit <- coxph(SurvObject ~ Z) 
+
+#coxph(SurvObject ~ Z):
+#Fits a model that uses MOFA factors to predict time to treatment
+#Useful to find biologically relevant patterns associated with disease progression
+
+fit #this prints the model output, which includes:
+
+#coef: How each factor affects risk (positive = higher risk, negative = lower risk)
+#exp(coef): Hazard ratio (HR). How the hazard changes with a one-unit increase in the factor.
+#1 means higher risk
+#<1 means lower risk
+#p-value: Whether this factor is statistically significant
+```
+# code above is explained in this note:
+#======================================
+#How to "open" and explore an object?
+
+#There are two ways to explore what’s inside an object:
+
+# A. Using @ (slot operator)
+#If the object is an S4 object (like a MOFA object), you use the @ symbol to access its parts (slots).
+
+#MOFAobject@samples_metadata
+#This opens the samples metadata, a table that stores information about your samples (e.g., group, condition, time, etc.).
+
+#Now, if that metadata is a data frame (a table), we can then use the $ to get specific columns:
+
+#MOFAobject@samples_metadata$TTT
+#This grabs the column called "TTT" from the samples_metadata table.
+
+#example below:
+#==============
+```{r}
+MOFAobject@samples_metadata
+
+```
+# To access TTT column inside:
+#==================================
+```{r}
+MOFAobject@samples_metadata$TTT
+```
+#understanding CLL_metadata vs MOFAobject@samples_metadata
+
+###CLL_metadata
+#=================
+#This is likely our original metadata — the raw clinical or phenotypic information we loaded before training the MOFA model. source data, not yet linked to the MOFA model.
+
+#vs
+
+
+### MOFAobject@samples_metadata
+#================================
+#This is the samples metadata that has been embedded inside our trained MOFA model.
+
+#It’s essentially a copy (or a processed version) of CLL_metadata, but:
+
+#Only includes samples that were used in MOFA
+#Might be filtered, renamed, or restructured to match MOFA's internal format
+#Used in downstream MOFA analyses like factor plotting, survival modeling, etc.
+
+```{r}
+#We can see that several factors have a significant association to time to treatment. For example, Factor 1 has a negative coefficient. Samples with low factor values have an increased hazard compared to samples with a large factor values.
+
+########### 12.0.2 Plot Hazard ratios
+
+s <- summary(fit)
+
+coef <- s[["coefficients"]]
+
+df <- data.frame(
+  factor = factor(rownames(coef), levels = rev(rownames(coef))),
+  p      = coef[,"Pr(>|z|)"], 
+  coef   = coef[,"exp(coef)"], 
+  lower  = s[["conf.int"]][,"lower .95"], 
+  higher = s[["conf.int"]][,"upper .95"]
+)
+
+ggplot(df, aes(x=factor, y=coef, ymin=lower, ymax=higher)) +
+  geom_pointrange( col='#619CFF') + 
+  coord_flip() +
+  scale_x_discrete() + 
+  labs(y="Hazard Ratio", x="") + 
+  geom_hline(aes(yintercept=1), linetype="dotted") +
+  theme_bw()
+
+```
+#############12.0.3 Kaplan-Meier plots
+
+#For illustration purposes we can also split the samples based on the factor values into two groups using the maximally selected rank statistics from the maxstat R package and plot the Kaplan Meier plots per group.
+
+```{r}
+df <- data.frame(
+  time = SurvObject[,1], 
+  event = SurvObject[,2], Z1 = Z[,1]
+)
+cut <- surv_cutpoint(df, variables='Z1')
+df$FactorCluster <- df$Z1 > cut$cutpoint$cutpoint
+fit <- survfit(Surv(time, event) ~ FactorCluster, df)
+
+library(survminer)
+ggsurvplot(fit, data = df,
+  conf.int = TRUE, pval = TRUE,
+  fun = function(y) y * 100,
+  legend = "top", legend.labs = c(paste("low LF 1"), paste("high LF 1")),
+  xlab = "Time to treatment", ylab="Survival probability (%)", title= "Factor 1"
+)$plot
+```
+###Interpretation:
+
+#The graph compares survival outcomes between two patient groups stratified by "Factor 1."
+#If the high LF 1 curve drops faster than the low LF 1 group, it suggests that high levels of Factor 1 correlate with worse survival (poor prognosis).
+#The tiny p-value (< 0.0001) strongly supports this association.
+
+
+```{r}
+###to use AMP gene symbols in another study
+
+# Extract hgnc_symbol from amp_gene_info
+hgnc_symbols <- amp_gene_info$hgnc_symbol
+
+# To view the vector or check the structure
+print(hgnc_symbols)
+
+# Remove NAs and empty symbols
+hgnc_symbols <- hgnc_symbols[!is.na(hgnc_symbols) & hgnc_symbols != ""]
+
+# Print the gene symbols without quotes, separated by spaces or commas
+cat(hgnc_symbols, sep = "\n")
+
+# Save as an R object
+saveRDS(hgnc_symbols, "AMP_gene_symbols.rds")
+
+# Or save as a text file (one symbol per line)
+writeLines(hgnc_symbols, "AMP_gene_symbols.txt")
+
+#trial to use in another script
+hgnc_symbols_1<-readRDS("AMP_gene_symbols.rds")
+```
