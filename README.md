@@ -25,7 +25,7 @@ This repository contains a **Multi-Omics-Data-analysis-using-MOFA-in-R script** 
 
 ### 1. Load Data
 - Load input multi-omics data: mRNA, DNA methylation, drug response, mutations.
-- Load sample metadata and AMP gene list.
+- Load sample metadata.
 
 ### 2. Prepare MOFA Object
 - Format data into MOFA-compatible list structure.
