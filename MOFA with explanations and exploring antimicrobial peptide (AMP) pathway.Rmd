@@ -1,6 +1,6 @@
 ---
 title: "MOFA with explanations and exploring antimicrobial peptide (AMP) pathway "
-output: html_document
+
 prepared by:Menatallah Adel Abdelmagid
 date: "2025-04-07"
 ---
